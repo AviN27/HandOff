@@ -1,0 +1,32 @@
+# Common
+.DS_Store
+*.log
+.env
+.env.local
+
+# Node
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Project Specific
+backend/screenshots/
+backend/server_debug.log
+backend/actions.log
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

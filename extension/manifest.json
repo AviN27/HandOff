@@ -1,0 +1,34 @@
+{
+    "manifest_version": 3,
+    "name": "UDAA Live Controller",
+    "version": "1.0",
+    "description": "Bridges Universal Digital Accessibility Agent AI with the live browser.",
+    "permissions": [
+        "tabs",
+        "scripting",
+        "activeTab",
+        "storage",
+        "debugger"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "websocket_client.js",
+                "overlay.js",
+                "content_script.js"
+            ]
+        }
+    ],
+    "action": {
+        "default_title": "UDAA Controller"
+    }
+}

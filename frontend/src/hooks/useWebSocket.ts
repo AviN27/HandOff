@@ -1,0 +1,222 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { AgentStatus, AgentAction, SafetyConfirmRequest } from '../lib/types';
+
+interface UseWebSocketReturn {
+    isConnected: boolean;
+    status: AgentStatus;
+    statusDetail: string;
+    step: number;
+    screenshot: string | null;
+    actions: { step: number; data: AgentAction }[];
+    narration: string;
+    safetyRequest: SafetyConfirmRequest | null;
+    taskSummary: string | null;
+    error: string | null;
+    startTask: (task: string, start_url: string, executionMode?: "remote" | "live") => void;
+    sendSafetyResponse: (request_id: string, approved: boolean) => void;
+    cancelTask: () => void;
+}
+
+export function useWebSocket(sessionId: string | null): UseWebSocketReturn {
+    const [isConnected, setIsConnected] = useState(false);
+    const [status, setStatus] = useState<AgentStatus>('idle');
+    const [statusDetail, setStatusDetail] = useState('');
+    const [step, setStep] = useState(0);
+    const [screenshot, setScreenshot] = useState<string | null>(null);
+    const [actions, setActions] = useState<{ step: number; data: AgentAction }[]>([]);
+    const [narration, setNarration] = useState('');
+    const [safetyRequest, setSafetyRequest] = useState<SafetyConfirmRequest | null>(null);
+    const [taskSummary, setTaskSummary] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    const wsRef = useRef<WebSocket | null>(null);
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const reconnectAttempts = useRef(0);
+    const intentionalClose = useRef(false);
+
+    const connect = useCallback(() => {
+        if (!sessionId) return;
+
+        // Reset state on new connection attempt (but keep history if just reconnecting)
+        if (reconnectAttempts.current === 0) {
+            setStatus('idle');
+            setStatusDetail('');
+            setStep(0);
+            setScreenshot(null);
+            setActions([]);
+            setNarration('');
+            setSafetyRequest(null);
+            setTaskSummary(null);
+            setError(null);
+        }
+
+        const wsUrl = `ws://localhost:8080/ws/${sessionId}`;
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            console.log(`WebSocket connected to ${sessionId}`);
+            setIsConnected(true);
+            setError(null);
+            reconnectAttempts.current = 0;
+            intentionalClose.current = false;
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                const { type, data } = message;
+
+                switch (type) {
+                    case 'status_update':
+                        setStatus(data.status);
+                        if (data.detail) setStatusDetail(data.detail);
+                        break;
+
+                    case 'screenshot_update':
+                        setScreenshot(data.screenshot);
+                        setStep(data.step);
+                        break;
+
+                    case 'action_executed':
+                        setActions((prev) => [...prev, { step: data.step, data: data.action }]);
+                        break;
+
+                    case 'narration':
+                        setNarration(data.text);
+                        break;
+
+                    case 'safety_confirm':
+                        setStatus('confirming');
+                        setStatusDetail('Waiting for user confirmation');
+                        setSafetyRequest({
+                            request_id: data.request_id,
+                            action: data.action,
+                        });
+                        break;
+
+                    case 'task_complete':
+                        setStatus('completed');
+                        setStatusDetail('Task finished');
+                        setTaskSummary(data.summary);
+                        break;
+
+                    case 'error':
+                        setStatus('error');
+                        setError(data.message);
+                        break;
+
+                    default:
+                        console.warn(`Unknown message type: ${type}`);
+                }
+            } catch (err) {
+                console.error('Failed to parse WebSocket message', err);
+            }
+        };
+
+        ws.onclose = () => {
+            setIsConnected(false);
+
+            // Auto-reconnect with exponential backoff if not explicitly completed/cancelled
+            if (status !== 'completed' && status !== 'cancelled' && status !== 'error') {
+                const timeout = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+                console.log(`WebSocket disconnected. Reconnecting in ${timeout}ms...`);
+                reconnectAttempts.current += 1;
+
+                reconnectTimeoutRef.current = setTimeout(() => {
+                    connect();
+                }, timeout);
+            }
+        };
+
+        ws.onerror = (err) => {
+            // Avoid logging errors during intentional cleanup
+            if (!intentionalClose.current) {
+                console.error('WebSocket error:', err);
+            }
+        };
+
+        wsRef.current = ws;
+    }, [sessionId]); // removed status since we use refs/functional updates where needed
+
+    // Connect on mount or sessionId change
+    useEffect(() => {
+        intentionalClose.current = false;
+        connect();
+
+        return () => {
+            intentionalClose.current = true;
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            if (wsRef.current) {
+                // Prevent onclose from triggering a reconnect loop after unmount
+                wsRef.current.onclose = null;
+                wsRef.current.onerror = null;
+                wsRef.current.close();
+            }
+        };
+    }, [connect]);
+
+
+    // --- Actions ---
+
+    const startTask = useCallback((task: string, start_url: string, executionMode: "remote" | "live" = "remote") => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            setError('Not connected to backend');
+            return;
+        }
+
+        // Reset state for new task if reusing session
+        setStep(0);
+        setScreenshot(null);
+        setActions([]);
+        setNarration('');
+        setSafetyRequest(null);
+        setTaskSummary(null);
+        setError(null);
+
+        wsRef.current.send(JSON.stringify({
+            type: 'task_start',
+            data: { task, start_url, execution_mode: executionMode }
+        }));
+    }, []);
+
+    const sendSafetyResponse = useCallback((request_id: string, approved: boolean) => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+        wsRef.current.send(JSON.stringify({
+            type: 'safety_response',
+            data: { request_id, approved }
+        }));
+
+        setSafetyRequest(null);
+        setStatus('thinking');
+        setStatusDetail('Resuming execution...');
+    }, []);
+
+    const cancelTask = useCallback(() => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+        wsRef.current.send(JSON.stringify({
+            type: 'cancel_task',
+            data: {}
+        }));
+
+        setStatus('cancelled');
+        setStatusDetail('Task cancelled by user');
+    }, []);
+
+    return {
+        isConnected,
+        status,
+        statusDetail,
+        step,
+        screenshot,
+        actions,
+        narration,
+        safetyRequest,
+        taskSummary,
+        error,
+        startTask,
+        sendSafetyResponse,
+        cancelTask,
+    };
+}

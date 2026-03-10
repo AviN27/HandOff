@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-udaa-489513}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GCS_BUCKET=${GCS_BUCKET:-udaa-screenshots}
+      - PUBSUB_TOPIC=${PUBSUB_TOPIC:-udaa-actions}
+      - PUBSUB_SUBSCRIPTION=${PUBSUB_SUBSCRIPTION:-udaa-actions-sub}
+      - COMPUTER_USE_MODEL=${COMPUTER_USE_MODEL:-gemini-2.5-flash-preview-04-17}
+      - LIVE_MODEL=${LIVE_MODEL:-gemini-2.5-flash}
+      - SCREEN_WIDTH=1440
+      - SCREEN_HEIGHT=900
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro # For local ADC testing
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod # Optional: create for prod build
+    image: node:20-slim
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+    command: npm run dev
+    environment:
+      - NODE_ENV=development
