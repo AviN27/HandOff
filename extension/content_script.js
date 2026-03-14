@@ -1,6 +1,158 @@
 // content_script.js
 // Responsible for executing actions on the DOM and extracting data
 
+function _setInputValue(element, value) {
+    if (element.isContentEditable) {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, value);
+    } else {
+        const proto = element.tagName === "TEXTAREA"
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (setter) setter.call(element, value);
+        else element.value = value;
+    }
+}
+
+function _fireEnter(element) {
+    ["keydown", "keypress", "keyup"].forEach(evType => {
+        element.dispatchEvent(new KeyboardEvent(evType, {
+            key: "Enter", code: "Enter", keyCode: 13, which: 13,
+            bubbles: true, cancelable: true
+        }));
+    });
+    if (element.form && document.contains(element)) {
+        element.form.requestSubmit?.() ?? element.form.submit();
+    }
+}
+
+function _scaleCoords(args) {
+    let x = args.x ?? 0, y = args.y ?? 0;
+    if (args.coordinates?.length >= 2) {
+        x = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
+        y = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
+    } else if (typeof x === "number" && typeof y === "number") {
+        x = Math.round((x / 1000) * window.innerWidth);
+        y = Math.round((y / 1000) * window.innerHeight);
+    }
+    return { x, y };
+}
+
+async function executeAction(action, args) {
+    if (action === "click_at" || action === "click" || action === "left_click") {
+        const { x, y } = _scaleCoords(args);
+        return window.udaa.performClick(x, y);
+
+    } else if (action === "type_text_at" || action === "type") {
+        if (args.x !== undefined || args.coordinates) {
+            const { x, y } = _scaleCoords(args);
+            window.udaa.performClick(x, y);
+            await new Promise(r => setTimeout(r, 80)); // let focus settle
+        }
+        return window.udaa.performType(args.text);
+
+    } else if (action === "navigate" || action === "open_web_browser") {
+        if (args.url && args.url !== "about:blank") {
+            window.location.href = args.url;
+            await new Promise(r => setTimeout(r, 200));
+        }
+        return true;
+
+    } else if (action === "hover_at" || action === "hover") {
+        const { x, y } = _scaleCoords(args);
+        return window.udaa.performHover(x, y);
+
+    } else if (action === "key_combination") {
+        return window.udaa.performKeyCombination(args.keys || []);
+
+    } else if (action === "scroll_document" || action === "scroll") {
+        return window.udaa.performScroll(args.direction || "down", args.amount || 3);
+
+    } else if (action === "scroll_at") {
+        const { x, y } = _scaleCoords(args);
+        window.udaa.performHover(x, y);
+        return window.udaa.performScroll(args.direction || "down", args.amount || 3);
+    }
+    return false;
+}
+
+function _setInputValue(element, value) {
+    if (element.isContentEditable) {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, value);
+    } else {
+        const proto = element.tagName === "TEXTAREA"
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (setter) setter.call(element, value);
+        else element.value = value;
+    }
+}
+
+function _fireEnter(element) {
+    ["keydown", "keypress", "keyup"].forEach(evType => {
+        element.dispatchEvent(new KeyboardEvent(evType, {
+            key: "Enter", code: "Enter", keyCode: 13, which: 13,
+            bubbles: true, cancelable: true
+        }));
+    });
+    if (element.form && document.contains(element)) {
+        element.form.requestSubmit?.() ?? element.form.submit();
+    }
+}
+
+function _scaleCoords(args) {
+    let x = args.x ?? 0, y = args.y ?? 0;
+    if (args.coordinates?.length >= 2) {
+        x = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
+        y = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
+    } else if (typeof x === "number" && typeof y === "number") {
+        x = Math.round((x / 1000) * window.innerWidth);
+        y = Math.round((y / 1000) * window.innerHeight);
+    }
+    return { x, y };
+}
+
+async function executeAction(action, args) {
+    if (action === "click_at" || action === "click" || action === "left_click") {
+        const { x, y } = _scaleCoords(args);
+        return window.udaa.performClick(x, y);
+
+    } else if (action === "type_text_at" || action === "type") {
+        if (args.x !== undefined || args.coordinates) {
+            const { x, y } = _scaleCoords(args);
+            window.udaa.performClick(x, y);
+            await new Promise(r => setTimeout(r, 80)); // let focus settle
+        }
+        return window.udaa.performType(args.text);
+
+    } else if (action === "navigate" || action === "open_web_browser") {
+        if (args.url && args.url !== "about:blank") {
+            window.location.href = args.url;
+            await new Promise(r => setTimeout(r, 200));
+        }
+        return true;
+
+    } else if (action === "hover_at" || action === "hover") {
+        const { x, y } = _scaleCoords(args);
+        return window.udaa.performHover(x, y);
+
+    } else if (action === "key_combination") {
+        return window.udaa.performKeyCombination(args.keys || []);
+
+    } else if (action === "scroll_document" || action === "scroll") {
+        return window.udaa.performScroll(args.direction || "down", args.amount || 3);
+
+    } else if (action === "scroll_at") {
+        const { x, y } = _scaleCoords(args);
+        window.udaa.performHover(x, y);
+        return window.udaa.performScroll(args.direction || "down", args.amount || 3);
+    }
+    return false;
+}
+
 window.udaa = {
     getDOMSnapshot: () => {
         return document.documentElement.outerHTML;
@@ -11,7 +163,7 @@ window.udaa = {
         // We must subtract scroll distances
         const viewportX = x - window.scrollX;
         const viewportY = y - window.scrollY;
-        
+
         let element = document.elementFromPoint(viewportX, viewportY);
         // Fallback to absolute point if off-screen heuristics fail
         if (!element) element = document.elementFromPoint(x, y);
@@ -37,7 +189,7 @@ window.udaa = {
             element.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0 }));
             element.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
             element.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
-            
+
             // Focus the element so that subsequent type actions target this element
             if (typeof element.focus === 'function') {
                 element.focus();
@@ -51,110 +203,67 @@ window.udaa = {
 
     performType: (text) => {
         const element = document.activeElement;
-        if (element && (element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.isContentEditable)) {
-            
-            console.log(`UDAA: Received type command:`, text);
+        if (!element || (
+            element.tagName !== "INPUT" &&
+            element.tagName !== "TEXTAREA" &&
+            !element.isContentEditable
+        )) {
+            console.warn("UDAA: No focused input for type action");
+            return false;
+        }
 
-            // 1. Clean duplicated strings if AI repeated itself due to lag
-            // Sometimes the model outputs "HELLOHELLO" instead of "HELLO". Let's use a heuristic:
-            // If the string is exactly the same half repeated (e.g., "wordword"), cut it in half.
-            if (text.length > 3) {
-                const halfLen = Math.floor(text.length / 2);
-                if (text.slice(0, halfLen) === text.slice(halfLen)) {
-                    text = text.slice(0, halfLen);
-                }
-                // Check for 3 repeats (e.g. "youtube.comyoutube.comyoutube.com")
-                const thirdLen = Math.floor(text.length / 3);
-                if (thirdLen > 2 && text.slice(0, thirdLen) === text.slice(thirdLen, thirdLen * 2) && text.slice(0, thirdLen) === text.slice(thirdLen * 2, thirdLen * 3)) {
-                    text = text.slice(0, thirdLen);
-                }
-            }
+        // Dedup repeated strings (keep existing logic)
+        if (text.length > 3) {
+            const h = Math.floor(text.length / 2);
+            if (text.slice(0, h) === text.slice(h)) text = text.slice(0, h);
+            const t = Math.floor(text.length / 3);
+            if (t > 2 && text.slice(0, t) === text.slice(t, t * 2)
+                && text.slice(0, t) === text.slice(t * 2)) text = text.slice(0, t);
+        }
 
-            // 2. Extract special shortcuts (e.g. control+a, delete, backspace*N)
-            const specialKeysRegex = /(control\+[a-z]|cmd\+[a-z]|shift\+[a-z]|alt\+[a-z]|enter|backspace(?:\*\d+)?|delete(?:\*\d+)?|tab|escape)/gi;
-            let specialActions = text.match(specialKeysRegex) || [];
-            let remainingText = text.replace(specialKeysRegex, '').trim();
+        // Parse into ordered [text | special] parts
+        const specialRe = /(control\+[a-z]|cmd\+[a-z]|enter|backspace(?:\*\d+)?|delete(?:\*\d+)?|tab|escape)/gi;
+        const parts = [];
+        let last = 0, m;
+        const re = new RegExp(specialRe.source, "gi");
+        while ((m = re.exec(text)) !== null) {
+            if (m.index > last) parts.push({ type: "text", value: text.slice(last, m.index).trim() });
+            parts.push({ type: "special", value: m[0].toLowerCase() });
+            last = re.lastIndex;
+        }
+        if (last < text.length) {
+            const r = text.slice(last).trim();
+            if (r) parts.push({ type: "text", value: r });
+        }
 
-            // 3. Apply standard text if any remains
-            if (remainingText.length > 0) {
-                if (element.isContentEditable) {
-                    // This creates proper input events for WhatsApp/Facebook
-                    const range = document.createRange();
-                    range.selectNodeContents(element);
-                    const sel = window.getSelection();
-                    sel.removeAllRanges();
-                    sel.addRange(range);
-                    document.execCommand('delete', false, null); // clear existing
-                    document.execCommand('insertText', false, remainingText);
-                } else {
-                    // React/Vue friendly value setting
-                    let nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-                    let nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-                    
-                    if (element.tagName === 'INPUT' && nativeInputValueSetter) {
-                        nativeInputValueSetter.call(element, remainingText);
-                    } else if (element.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
-                        nativeTextAreaValueSetter.call(element, remainingText);
-                    } else {
-                        element.value = remainingText; // fallback
-                    }
-                }
-            }
-
-            // 4. Apply special actions
-            for (let action of specialActions) {
-                action = action.toLowerCase();
-                
-                if (action === 'control+a' || action === 'cmd+a') {
-                    if (element.setSelectionRange && element.value !== undefined) {
+        let hasEnter = false;
+        for (const part of parts) {
+            if (part.type === "text" && part.value) {
+                _setInputValue(element, part.value);
+            } else if (part.type === "special") {
+                const a = part.value;
+                if (a === "control+a" || a === "cmd+a") {
+                    if (element.setSelectionRange && element.value !== undefined)
                         element.setSelectionRange(0, element.value.length);
-                    } else if (element.isContentEditable) {
-                        const range = document.createRange();
-                        range.selectNodeContents(element);
-                        const sel = window.getSelection();
-                        sel.removeAllRanges();
-                        sel.addRange(range);
-                    }
-                } else if (action.startsWith('backspace')) {
-                    let count = 1;
-                    const match = action.match(/backspace\*(\d+)/);
-                    if (match) count = parseInt(match[1]);
-                    if (element.value) element.value = element.value.slice(0, -count);
-                    else if (element.innerText) element.innerText = element.innerText.slice(0, -count);
-                } else if (action.startsWith('delete')) {
-                    let count = 1;
-                    const match = action.match(/delete\*(\d+)/);
-                    if (match) count = parseInt(match[1]);
-                    // Delete is tricky without knowing cursor position, fallback to clearing value
+                } else if (a.startsWith("backspace")) {
+                    const n = parseInt(a.match(/\*(\d+)/)?.[1] || "1");
+                    if (element.value !== undefined) element.value = element.value.slice(0, -n);
+                } else if (a.startsWith("delete")) {
                     if (element.value !== undefined) element.value = "";
-                    else if (element.innerText !== undefined) element.innerText = "";
-                } else if (action === 'enter') {
-                    // Fire a more complete set of enter key events
-                    setTimeout(() => {
-                        const keyEvents = ['keydown', 'keypress', 'keyup'];
-                        for (let ev of keyEvents) {
-                            element.dispatchEvent(new KeyboardEvent(ev, { 
-                                key: 'Enter', 
-                                code: 'Enter', 
-                                keyCode: 13, 
-                                which: 13, 
-                                bubbles: true,
-                                cancelable: true
-                            }));
-                        }
-                        if (element.form) element.form.submit();
-                    }, 50);
-                } else if (action === 'escape') {
+                } else if (a === "enter") {
+                    hasEnter = true;   // deferred — fire after input/change
+                } else if (a === "escape") {
                     element.blur();
                 }
             }
-            
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-            element.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log(`UDAA: Applied type result`);
-            return true;
         }
-        return false;
+
+        // CS-5 fix: input/change THEN enter — React state updates first
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        if (hasEnter) _fireEnter(element);
+
+        return true;
     },
 
     performHover: (x, y) => {
@@ -182,7 +291,7 @@ window.udaa = {
 
     performKeyCombination: (keysRaw) => {
         const element = document.activeElement || document.body;
-        
+
         // Fix for TypeError: keys.join is not a function
         let keys = [];
         if (Array.isArray(keysRaw)) {
@@ -192,9 +301,9 @@ window.udaa = {
         } else {
             return false;
         }
-        
+
         console.log(`UDAA: Key combo: ${keys.join('+')}`);
-        
+
         // Dispatch keydown for all
         for (let key of keys) {
             element.dispatchEvent(new KeyboardEvent('keydown', {
@@ -204,7 +313,7 @@ window.udaa = {
                 cancelable: true
             }));
         }
-        
+
         // Dispatch keyup in reverse
         for (let i = keys.length - 1; i >= 0; i--) {
             element.dispatchEvent(new KeyboardEvent('keyup', {
@@ -228,98 +337,38 @@ window.udaa = {
 // Listen for action commands from the background service worker
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === "EXECUTE_ACTION") {
-        let success = false;
-        const { action, args } = request.payload;
-
-        try {
-            if (action === "click_at" || action === "click" || action === "left_click") {
-                // Gemini returns normalized coordinates [0, 1000]
-                let x = args.x;
-                let y = args.y;
-                
-                if (args.coordinates && args.coordinates.length >= 2) {
-                    // Convert from 1000x1000 grid to actual viewport sizing
-                    x = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
-                    y = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
-                } else if (typeof x === "number" && typeof y === "number") {
-                    x = Math.round((x / 1000) * window.innerWidth);
-                    y = Math.round((y / 1000) * window.innerHeight);
-                }
-                
-                success = window.udaa.performClick(x, y);
-            } else if (action === "type_text_at" || action === "type") {
-                // If coordinates are provided, focus/click the element first
-                if (args.x !== undefined && args.y !== undefined) {
-                    let tx = args.x;
-                    let ty = args.y;
-                    if (args.coordinates && args.coordinates.length >= 2) {
-                        tx = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
-                        ty = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
-                    } else if (typeof tx === "number" && typeof ty === "number") {
-                        tx = Math.round((tx / 1000) * window.innerWidth);
-                        ty = Math.round((ty / 1000) * window.innerHeight);
-                    }
-                    window.udaa.performClick(tx, ty);
-                }
-                success = window.udaa.performType(args.text);
-            } else if (action === "hover_at" || action === "hover") {
-                let hx = args.x;
-                let hy = args.y;
-                if (args.coordinates && args.coordinates.length >= 2) {
-                    hx = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
-                    hy = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
-                } else if (typeof hx === "number" && typeof hy === "number") {
-                    hx = Math.round((hx / 1000) * window.innerWidth);
-                    hy = Math.round((hy / 1000) * window.innerHeight);
-                }
-                success = window.udaa.performHover(hx, hy);
-            } else if (action === "key_combination") {
-                success = window.udaa.performKeyCombination(args.keys || []);
-            } else if (action === "scroll_document" || action === "scroll") {
-                success = window.udaa.performScroll(args.direction || "down", args.amount || 3);
-            } else if (action === "scroll_at") {
-                // Hover first, then scroll
-                let sx = args.x;
-                let sy = args.y;
-                if (args.coordinates && args.coordinates.length >= 2) {
-                    sx = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
-                    sy = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
-                } else if (typeof sx === "number" && typeof sy === "number") {
-                    sx = Math.round((sx / 1000) * window.innerWidth);
-                    sy = Math.round((sy / 1000) * window.innerHeight);
-                }
-                window.udaa.performHover(sx, sy);
-                success = window.udaa.performScroll(args.direction || "down", args.amount || 3);
-            } else if (action === "navigate") {
-                window.location.href = args.url;
-                success = true;
-            } else if (action === "open_web_browser") {
-                if (args.url && args.url !== "about:blank") window.location.href = args.url;
-                success = true;
+        (async () => {
+            let success = false;
+            try {
+                success = await executeAction(
+                    request.payload.action,
+                    request.payload.args
+                );
+            } catch (e) {
+                console.error("UDAA execution error:", e);
+                sendResponse({ success: false, detail: e.toString() });
+                return;
             }
-
-            sendResponse({ success, action });
-        } catch (e) {
-            console.error("UDAA execution error:", e);
-            sendResponse({ success: false, action, detail: e.toString() });
-        }
+            sendResponse({ success, action: request.payload.action });
+        })();
+        return true;  // CRITICAL: keeps message channel open for async response
     } else if (request.type === "UDAA_STATUS") {
         if (request.payload) {
             const status = request.payload.status;
             const msg = `UDAA: ${request.payload.message}`;
-            const type = (status === "completed" || status === "error" || status === "timeout" || status === "cancelled") 
-                ? (status === "completed" ? "completed" : "error") 
+            const type = (status === "completed" || status === "error" || status === "timeout" || status === "cancelled")
+                ? (status === "completed" ? "completed" : "error")
                 : "active";
 
             // If the overlay library loaded, use it
             if (window.udaaOverlay && typeof window.udaaOverlay.showStatus === 'function') {
                 if (status === "cancelled") {
-                     window.udaaOverlay.hideStatus();
+                    window.udaaOverlay.hideStatus();
                 } else {
-                     window.udaaOverlay.showStatus(msg, type);
-                     if (type !== 'active') {
-                         setTimeout(() => window.udaaOverlay.hideStatus(), 5000);
-                     }
+                    window.udaaOverlay.showStatus(msg, type);
+                    if (type !== 'active') {
+                        setTimeout(() => window.udaaOverlay.hideStatus(), 5000);
+                    }
                 }
             } else {
                 // Fallback: Build banner directly if overlay.js was blocked by CSP
@@ -341,7 +390,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     banner.style.boxShadow = "0 4px 15px rgba(0,0,0,0.5)";
                     document.body.appendChild(banner);
                 }
-                
+
                 banner.textContent = msg;
                 if (type === 'active') {
                     banner.style.border = "2px solid #00f2fe";
@@ -365,16 +414,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 if (!window.__udaaConnectInitialized) {
     window.__udaaConnectInitialized = true;
-    
+
     // Auto-connect flow: check if a session ID was passed via URL or injected by Playwright
     let connectAttempts = 0;
     const connectInterval = setInterval(() => {
         connectAttempts++;
-        
+
         // 1. Check URL parameters (for native webbrowser launch)
         const urlParams = new URLSearchParams(window.location.search);
         let sessionId = urlParams.get('udaa_session_id');
-        
+
         // 2. Check localStorage (for Playwright launch)
         if (!sessionId) {
             sessionId = window.localStorage.getItem('udaa_session_id');
