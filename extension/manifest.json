@@ -22,8 +22,8 @@
                 "<all_urls>"
             ],
             "js": [
-                "websocket_client.js",
                 "overlay.js",
+                "websocket_client.js",
                 "content_script.js"
             ]
         }

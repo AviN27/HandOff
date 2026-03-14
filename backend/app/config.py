@@ -12,13 +12,14 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
 
     # GCP Services (Firestore only)
+    USE_FIRESTORE: bool = False
     FIRESTORE_COLLECTION: str = "sessions"
 
     # Local Storage
     LOCAL_SCREENSHOT_DIR: str = "screenshots"
 
     # Gemini Models
-    COMPUTER_USE_MODEL: str = "gemini-2.5-flash-preview-04-17"
+    COMPUTER_USE_MODEL: str = "gemini-2.5-computer-use-preview-10-2025"
     LIVE_MODEL: str = "gemini-2.0-flash-exp"
 
     # Browser / Screen

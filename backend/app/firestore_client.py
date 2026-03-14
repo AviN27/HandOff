@@ -14,6 +14,8 @@ _firestore_client = None
 
 def _get_client():
     global _firestore_client
+    if not settings.USE_FIRESTORE:
+        return None
     if _firestore_client is None:
         try:
             from google.cloud import firestore

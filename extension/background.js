@@ -26,6 +26,22 @@ function connectWebSocket(sessionId) {
             executeInActiveTab(message);
         } else if (message.type === "stop_stream") {
             stopStreamingFrames();
+        } else if (message.type === "status") {
+            // Forward status to the active tab to render the UI banner
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (tabs.length === 0) return;
+                
+                // Ensure scripts are injected before sending status
+                chrome.scripting.executeScript({
+                    target: { tabId: tabs[0].id },
+                    files: ["overlay.js", "content_script.js"]
+                }, () => {
+                    chrome.tabs.sendMessage(tabs[0].id, {
+                        type: "UDAA_STATUS",
+                        payload: message
+                    });
+                });
+            });
         }
     };
 
@@ -41,41 +57,53 @@ function executeInActiveTab(command) {
         const activeTab = tabs[0];
 
         // Inject overlay if not already present
-        chrome.scripting.executeScript({
-            target: { tabId: activeTab.id },
-            files: ["overlay.js", "content_script.js"]
-        }, () => {
-            // Send message to the content script in the active tab
-            chrome.tabs.sendMessage(activeTab.id, {
-                type: "EXECUTE_ACTION",
-                payload: { action: command.action, args: command }
-            }, (response) => {
-                // Report result back to backend
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: "action_result",
-                        result: response || { action: command.action, success: false, detail: "No response from tab" }
-                    }));
+        try {
+            chrome.scripting.executeScript({
+                target: { tabId: activeTab.id },
+                files: ["overlay.js", "content_script.js"]
+            }, () => {
+                if (chrome.runtime.lastError) {
+                    console.warn("UDAA Extension: Could not inject scripts:", chrome.runtime.lastError.message);
                 }
+                
+                // Send message to the content script in the active tab
+                chrome.tabs.sendMessage(activeTab.id, {
+                    type: "EXECUTE_ACTION",
+                    payload: { action: command.action, args: command }
+                }, (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.warn("UDAA Extension: Could not send message to tab:", chrome.runtime.lastError.message);
+                    }
+                    
+                    // Report result back to backend
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: "action_result",
+                            result: response || { action: command.action, success: false, detail: "No response from tab" }
+                        }));
+                    }
+                });
             });
-        });
+        } catch (e) {
+            console.error("UDAA Extension: Failed to execute tab action", e);
+        }
     });
 }
 
 function startStreamingFrames() {
     if (streamingInterval) return;
-    // Capture screen at ~2 FPS (500ms) and send to backend
+    // Capture screen at ~1 FPS (1200ms) to avoid MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND Chrome errors
     streamingInterval = setInterval(() => {
         chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
             if (chrome.runtime.lastError) {
-                console.error(chrome.runtime.lastError.message);
+                // Silently ignore "tabs cannot be edited" or dragging errors
                 return;
             }
 
             if (dataUrl && ws && ws.readyState === WebSocket.OPEN) {
                 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
                     let url = "unknown";
-                    if (tabs.length > 0) url = tabs[0].url;
+                    if (tabs && tabs.length > 0) url = tabs[0].url;
 
                     ws.send(JSON.stringify({
                         type: "screen_frame",
@@ -85,7 +113,7 @@ function startStreamingFrames() {
                 });
             }
         });
-    }, 500);
+    }, 1200);
 }
 
 function stopStreamingFrames() {
@@ -101,6 +129,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         connectWebSocket(request.sessionId);
     }
 });
+
+// Background polling failsafe: check active tabs periodically for the session ID
+// This catches cases where content_script.js is blocked from running (e.g., chrome:// or restricted pages)
+let activeTabPolling = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) return; // Already connected
+    
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) return;
+        const url = tabs[0].url;
+        if (!url) return;
+        
+        try {
+            const urlObj = new URL(url);
+            const sessionId = urlObj.searchParams.get('udaa_session_id');
+            if (sessionId && sessionId !== currentSessionId) {
+                console.log("UDAA Background Polling: Found session ID in tab URL", sessionId);
+                connectWebSocket(sessionId);
+            }
+        } catch (e) {
+            // Invalid URL (e.g. chrome://), ignore
+        }
+    });
+}, 1000);
 
 // Keep manual fallback just in case
 chrome.action.onClicked.addListener((tab) => {

@@ -32,7 +32,7 @@ async def run_agent_loop(
     2. Send screenshot + task → Gemini Computer Use model
     3. Parse function_call actions
     4. Handle safety_decision (require_confirmation → ask user)
-    5. Execute actions via Playwright
+    5. Execute actions via Playwright or Live Extension
     6. Capture new screenshot
     7. Repeat until task complete or max turns reached
     """
@@ -48,12 +48,18 @@ async def run_agent_loop(
             )
         ],
         system_instruction=(
-            "You are a helpful digital accessibility agent. You help users complete "
-            "tasks on websites by observing the screen and performing actions. "
-            "Be careful, methodical, and explain your reasoning. "
-            "When you see sensitive actions (passwords, payments, personal data), "
-            "use require_confirmation. When the task is fully complete, respond "
-            "with a text summary starting with 'TASK COMPLETE:'."
+            "You are a helpful digital accessibility agent. Your goal is to complete "
+            "tasks on websites by observing the screen and performing UI actions. "
+            "CRITICAL LIMITATION: You do NOT have access to the DOM tree or accessibility nodes. "
+            "You must estimate 'click' coordinates (x, y) purely visually based on the standard 1000x1000 grid. "
+            "IMPORTANT RULES: "
+            "1. If the screen is blank or you need to start a task (e.g., 'Open youtube'), "
+            "use the 'navigate' action to go to the exact URL immediately. "
+            "2. DO NOT queue up repetitive typing actions. If you need to type 'youtube.com', "
+            "issue a single 'type' action with exactly that text. "
+            "3. To press enter, type 'enter'. To delete text, type 'control+a' then 'delete'. "
+            "4. When you see sensitive actions (passwords, payments), use 'require_confirmation'. "
+            "5. When the task is fully complete, respond with a text summary starting with 'TASK COMPLETE:'."
         ),
     )
 
@@ -81,6 +87,13 @@ async def run_agent_loop(
 
         # Capture screenshot
         screenshot_bytes = await browser.capture_screenshot()
+        
+        # If no screenshot is available yet (e.g. extension connecting), wait and retry
+        if not screenshot_bytes:
+            logger.warning("No screenshot available yet, waiting 1s...")
+            await asyncio.sleep(1)
+            continue
+            
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
 
         # Send screenshot to frontend
