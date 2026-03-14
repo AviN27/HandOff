@@ -25,42 +25,32 @@ class LiveBrowserAdapter(BrowserAdapter):
         return self._page
 
     async def launch(self, start_url: str = ""):
-        """Launch a persistent Chrome instance with the UDAA extension pre-loaded."""
-        import os
-        from playwright.async_api import async_playwright
+        """Launch a new tab in the user's existing default OS browser."""
+        import urllib.parse
+        import webbrowser
         
-        # Resolve extension path absolute to this file
-        ext_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../extension"))
-        
-        self._playwright = await async_playwright().start()
-        
-        # Launch Chrome (must not be headless to support extensions)
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir="/tmp/udaa_live_profile",
-            channel="chrome",
-            headless=False,
-            args=[
-                f"--disable-extensions-except={ext_path}",
-                f"--load-extension={ext_path}",
-                "--window-size=1440,900"
-            ],
-            viewport={'width': 1440, 'height': 900}
-        )
-        
-        # Inject the Session ID securely into every page so the extension content script can grab it 
-        # and pass it to the background worker to auto-connect.
-        await self._context.add_init_script(
-            f"window.localStorage.setItem('udaa_session_id', '{self.session_id}');"
-        )
-        
-        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
-        
+        # Determine the base URL
         if not start_url:
-            start_url = "https://www.google.com"
+            base_url = "https://www.google.com"
+        else:
+            base_url = start_url
             
-        await self._page.goto(start_url)
+        # Parse existing URL to safely append our session query parameter
+        parsed_url = urllib.parse.urlparse(base_url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        query_params['udaa_session_id'] = [self.session_id]
+        
+        new_query = urllib.parse.urlencode(query_params, doseq=True)
+        final_url = parsed_url._replace(query=new_query).geturl()
+        
+        logger.info(f"Opening native browser tab: {final_url}")
+        
+        # Opens in a new tab in the user's default active browser
+        # Note: Must be run on the main thread, or since it's an async function, 
+        # using asyncio.to_thread if it blocks, but webbrowser.open is usually non-blocking.
+        await asyncio.to_thread(webbrowser.open, final_url, new=2)
             
-        logger.info(f"Launched Live Chrome with extension for session {self.session_id}")
+        logger.info(f"Triggered Live Chrome Native Tab for session {self.session_id}")
 
     async def capture_screenshot(self) -> bytes:
         """Wait for and return the latest screenshot from the extension stream."""
@@ -121,11 +111,6 @@ class LiveBrowserAdapter(BrowserAdapter):
             await ws_manager.send_to_extension(self.session_id, {"type": "stop_stream"})
         except Exception:
             pass
-            
-        if self._context:
-            await self._context.close()
-        if self._playwright:
-            await self._playwright.stop()
             
         self._latest_screenshot_bytes = None
         logger.info(f"LiveBrowserAdapter closed for {self.session_id}")

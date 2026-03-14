@@ -1,5 +1,10 @@
 """FastAPI application — main entrypoint."""
 
+import sys
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import asyncio
 import json
 import logging
@@ -151,12 +156,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await create_session(session_id, task, start_url)
 
                 # Initialize selected browser adapter
-                if execution_mode == "live":
-                    from app.browser_adapters.live_browser_adapter import LiveBrowserAdapter
-                    browser = LiveBrowserAdapter(session_id)
-                else:
-                    browser = PlaywrightAdapter()
-                    await browser.launch()
+                try:
+                    if execution_mode == "live":
+                        from app.browser_adapters.live_browser_adapter import LiveBrowserAdapter
+                        browser = LiveBrowserAdapter(session_id)
+                        await browser.launch(start_url=start_url)
+                    else:
+                        browser = PlaywrightAdapter()
+                        await browser.launch()
+                except Exception as launch_err:
+                    logger.error(f"Browser launch failed: {launch_err}")
+                    await ws_manager.send_error(
+                        session_id,
+                        f"Failed to launch browser: {str(launch_err)}"
+                    )
+                    continue
 
                 # Track session
                 active_sessions[session_id] = {
@@ -286,3 +300,16 @@ async def extension_websocket_endpoint(websocket: WebSocket, session_id: str):
     except Exception as e:
         logger.error(f"Extension WebSocket error: {e}")
         ws_manager.disconnect_extension(session_id)
+
+if __name__ == "__main__":
+    import uvicorn
+    import sys
+    import asyncio
+    
+    if sys.platform == "win32":
+        # Force proactor event loop for Playwright before Uvicorn does anything
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        # DO NOT use reload=True on Windows with Playwright, it breaks the subprocess transport
+        uvicorn.run("app.main:app", host="127.0.0.1", port=8080)
+    else:
+        uvicorn.run("app.main:app", host="127.0.0.1", port=8080, reload=True)

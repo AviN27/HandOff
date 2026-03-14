@@ -92,9 +92,16 @@ class ConnectionManager:
 
     async def send_status(self, session_id: str, status: str, detail: str = ""):
         """Send agent status update."""
+        # Send to main frontend UI
         await self.send_message(session_id, {
             "type": "status_update",
             "data": {"status": status, "detail": detail}
+        })
+        # Send to Live Browser Extension for overlay rendering
+        await self.send_to_extension(session_id, {
+            "type": "status",
+            "status": status,
+            "message": detail
         })
 
     async def send_safety_confirm(self, session_id: str, action: dict, request_id: str):
@@ -109,9 +116,16 @@ class ConnectionManager:
 
     async def send_task_complete(self, session_id: str, summary: str):
         """Notify the frontend that the task is complete."""
+        # Send to main frontend UI
         await self.send_message(session_id, {
             "type": "task_complete",
             "data": {"summary": summary}
+        })
+        # Send to Live Browser Extension for overlay rendering
+        await self.send_to_extension(session_id, {
+            "type": "status",
+            "status": "completed",
+            "message": summary
         })
 
     async def send_error(self, session_id: str, error: str):

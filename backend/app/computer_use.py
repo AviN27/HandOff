@@ -32,7 +32,7 @@ async def run_agent_loop(
     2. Send screenshot + task → Gemini Computer Use model
     3. Parse function_call actions
     4. Handle safety_decision (require_confirmation → ask user)
-    5. Execute actions via Playwright
+    5. Execute actions via Playwright or Live Extension
     6. Capture new screenshot
     7. Repeat until task complete or max turns reached
     """
@@ -48,12 +48,19 @@ async def run_agent_loop(
             )
         ],
         system_instruction=(
-            "You are a helpful digital accessibility agent. You help users complete "
-            "tasks on websites by observing the screen and performing actions. "
-            "Be careful, methodical, and explain your reasoning. "
-            "When you see sensitive actions (passwords, payments, personal data), "
-            "use require_confirmation. When the task is fully complete, respond "
-            "with a text summary starting with 'TASK COMPLETE:'."
+            "You are a browser automation agent completing tasks step by step. "
+            "Issue ONE action per response. Check action history before acting.\n\n"
+            "COMPLETION RULES — output 'TASK COMPLETE: <summary>' when:\n"
+            "- Search task: results page is visible with the searched term\n"
+            "- Navigation task: the target URL/page has fully loaded\n"
+            "- Form task: confirmation or success message is visible\n"
+            "- Play/open task: the media or content is actively playing\n\n"
+            "ACTION RULES:\n"
+            "1. One action per response — never queue multiple actions.\n"
+            "2. Action history is shown before each screenshot. Do NOT repeat any action already listed there.\n"
+            "3. After pressing Enter or clicking Search, the next action must be TASK COMPLETE if results load.\n"
+            "4. Use 'navigate' to go to a URL directly — never type URLs into search bars.\n"
+            "5. For sensitive actions (passwords, payments) use 'require_confirmation'."
         ),
     )
 
@@ -73,6 +80,9 @@ async def run_agent_loop(
         )
     ]
 
+    nudge_count = 0
+    last_action_signature: str | None = None
+
     for turn in range(settings.MAX_AGENT_TURNS):
         logger.info(f"Agent turn {turn + 1}/{settings.MAX_AGENT_TURNS}")
         await ws_manager.send_status(
@@ -81,6 +91,13 @@ async def run_agent_loop(
 
         # Capture screenshot
         screenshot_bytes = await browser.capture_screenshot()
+        
+        # If no screenshot is available yet (e.g. extension connecting), wait and retry
+        if not screenshot_bytes:
+            logger.warning("No screenshot available yet, waiting 1s...")
+            await asyncio.sleep(1)
+            continue
+            
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
 
         # Send screenshot to frontend
@@ -150,16 +167,44 @@ async def run_agent_loop(
         function_calls = [p.function_call for p in content.parts if p.function_call]
 
         if not function_calls:
-            # No actions and no completion — model might need more info
-            logger.info("No function calls in response, continuing...")
-            # Add a nudge
+            if text_parts:
+                combined_lower = " ".join(text_parts).lower()
+                completion_words = ["complete", "finished", "done", "successfully", "found", "loaded"]
+                if any(w in combined_lower for w in completion_words):
+                    await ws_manager.send_task_complete(session_id, " ".join(text_parts))
+                    await update_session_state(session_id, "completed", " ".join(text_parts))
+                    return
+            
+            nudge_count += 1
+            if nudge_count >= 2:
+                await ws_manager.send_task_complete(session_id, "Task appears complete.")
+                await update_session_state(session_id, "completed", "No-action stop")
+                return
+            
             contents.append(
                 types.Content(
                     role="user",
-                    parts=[types.Part(text="Please continue with the task. What action should be taken next?")],
+                    parts=[types.Part(text="Next single action? If done, say 'TASK COMPLETE: <summary>'.")],
                 )
             )
             continue
+
+        nudge_count = 0
+
+        current_sig = str([
+            (fc.name, dict(fc.args) if fc.args else {})
+            for fc in function_calls
+        ])
+         
+        if current_sig == last_action_signature:
+            logger.warning(f"Identical actions on turn {turn+1} — stopping")
+            await ws_manager.send_task_complete(
+                session_id, "Task complete — repeated action guard triggered."
+            )
+            await update_session_state(session_id, "completed", "Dedup stop")
+            return
+         
+        last_action_signature = current_sig
 
         # Execute each action
         for fc in function_calls:
@@ -190,19 +235,22 @@ async def run_agent_loop(
             await asyncio.sleep(0.5)
 
         # Add action results as user message for next turn
-        action_summaries = []
+        action_summary_lines = []
         for fc in function_calls:
-            action_summaries.append(f"Executed: {fc.name}")
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part(
-                        text="Actions executed successfully. Here is the updated screenshot."
-                    )
-                ],
-            )
-        )
+            args = dict(fc.args) if fc.args else {}
+            args_str = ", ".join(f"{k}={v}" for k, v in args.items())
+            action_summary_lines.append(f"  - {fc.name}({args_str})")
+         
+        contents.append(types.Content(
+            role="user",
+            parts=[types.Part(text=(
+                f"Turn {turn + 1} completed actions:\n"
+                + "\n".join(action_summary_lines)
+                + "\n\nUpdated screenshot attached. "
+                + "If the task goal is now visibly achieved on screen, respond "
+                + "'TASK COMPLETE: <summary>'. Otherwise, what is the ONE next action?"
+            ))],
+        ))
 
         # Brief wait for page to settle after actions
         await asyncio.sleep(1)
