@@ -50,6 +50,7 @@ function connectWebSocket(sessionId) {
                         type: "UDAA_STATUS",
                         payload: message
                     });
+                    captureAndSendFrame();
                 });
             });
         } else if (message.type === "action_preview") {
@@ -58,6 +59,7 @@ function connectWebSocket(sessionId) {
                 const tabId = tabs[0].id;
                 if (injectedTabs.has(tabId)) {
                     chrome.tabs.sendMessage(tabId, { type: "ACTION_PREVIEW", payload: message });
+                    captureAndSendFrame();
                     return;
                 }
 
@@ -119,6 +121,9 @@ function _sendMessageToActionScript(tabId, command) {
             console.warn("UDAA Extension: Could not send message to tab:", chrome.runtime.lastError.message);
         }
 
+        // Force an immediate frame capture after the action finishes
+        captureAndSendFrame();
+
         // Report result back to backend
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -129,30 +134,26 @@ function _sendMessageToActionScript(tabId, command) {
     });
 }
 
+function captureAndSendFrame() {
+    chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+        if (chrome.runtime.lastError) return;
+
+        if (dataUrl && ws && ws.readyState === WebSocket.OPEN) {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                const url = (tabs && tabs.length > 0) ? tabs[0].url : "unknown";
+                ws.send(JSON.stringify({
+                    type: "screen_frame",
+                    image: dataUrl.split(',')[1],
+                    url: url
+                }));
+            });
+        }
+    });
+}
+
 function startStreamingFrames() {
     if (streamingInterval) return;
-    // Capture screen at ~1 FPS (1200ms) to avoid MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND Chrome errors
-    streamingInterval = setInterval(() => {
-        chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
-            if (chrome.runtime.lastError) {
-                // Silently ignore "tabs cannot be edited" or dragging errors
-                return;
-            }
-
-            if (dataUrl && ws && ws.readyState === WebSocket.OPEN) {
-                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                    let url = "unknown";
-                    if (tabs && tabs.length > 0) url = tabs[0].url;
-
-                    ws.send(JSON.stringify({
-                        type: "screen_frame",
-                        image: dataUrl.split(',')[1],
-                        url: url
-                    }));
-                });
-            }
-        });
-    }, 1200);
+    streamingInterval = setInterval(captureAndSendFrame, 1200);
 }
 
 function stopStreamingFrames() {

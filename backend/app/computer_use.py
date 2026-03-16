@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import logging
+import hashlib
 import uuid
 import time
 from typing import Any
@@ -108,8 +109,13 @@ def _action_to_plain_english(action_name: str, args: dict) -> str:
     elif action_name == "navigate":
         return f"Open website: {args.get('url', '...')}"
     elif action_name in ["scroll", "scroll_document", "scroll_at"]:
-        dir = args.get("direction", "down")
-        return f"Scroll {dir} the page"
+        direction = args.get("direction", "down")
+        amount = args.get("amount", 3)
+        pixels = amount * 120
+        return f"Scroll {direction} {pixels}px"
+    elif action_name == "scroll_to":
+        target_y = args.get("pixel_y", args.get("target_y", 0))
+        return f"Jump to position {target_y}px"
     elif action_name == "key_combination":
         keys = args.get("keys", [])
         return f"Press shortcut: {'+'.join(keys) if isinstance(keys, list) else keys}"
@@ -192,8 +198,9 @@ async def run_agent_loop(
             "5. Follow the user's exact wording for names, stations, cities, and dates. Never substitute with a different station or city.\n"
             "6. If a page is still loading or shows a spinner, wait (do nothing) and let the next screenshot confirm the state before acting.\n"
             "7. If a site shows no availability or 'no results', report TASK COMPLETE with what you found — do not keep searching endlessly.\n"
-            "8. When a dropdown, autocomplete list, or city picker is open, use 'select_option' with the exact visible text (e.g., 'Delhi') to pick the item. This is much more reliable than clicking coordinates.\n"
-            "9. Only use 'click_at' for dropdowns if 'select_option' is not available or the items have no text labels."
+            "8. For scrolling: use 'scroll' with a 'coordinate' pointing at the element to scroll, 'direction' (up/down/left/right), and 'amount' in scroll clicks (1 click = 120 pixels). Always provide 'coordinate' so the correct scrollable element is targeted — not just the window. Example: scroll({coordinate: [500, 400], direction: 'down', amount: 3}) scrolls 360px downward at the element under coordinate (500, 400).\n"
+            "9. For dropdown menus, city pickers, autocomplete lists: use 'select_option' with the exact visible text to select an item. Only scroll inside a dropdown if the desired option is not visible in the current viewport.\n"
+            "10. Only use 'click_at' inside dropdowns if 'select_option' is not available or the items have no readable text labels."
         ),
     )
 
@@ -220,6 +227,8 @@ async def run_agent_loop(
 
     nudge_count = 0
     last_action_signature: str | None = None
+    last_screenshot_hash_at_action: str | None = None
+    last_action_finish_time: float = 0.0
 
     for turn in range(settings.MAX_AGENT_TURNS):
         logger.info(f"Agent turn {turn + 1}/{settings.MAX_AGENT_TURNS}")
@@ -227,8 +236,8 @@ async def run_agent_loop(
             session_id, "thinking", f"Step {turn + 1}: Analyzing screen...", grandparents_mode
         )
 
-        # Capture screenshot
-        screenshot_bytes = await browser.capture_screenshot()
+        # Capture screenshot — wait for a fresh one if we just performed an action
+        screenshot_bytes = await browser.capture_screenshot(min_timestamp=last_action_finish_time)
         
         # If no screenshot is available yet (e.g. extension connecting), wait and retry
         if not screenshot_bytes:
@@ -431,9 +440,12 @@ async def run_agent_loop(
             (fc.name, dict(fc.args) if fc.args else {})
             for fc in function_calls
         ])
-         
-        if current_sig == last_action_signature:
-            logger.warning(f"Identical actions on turn {turn+1} — stopping")
+
+        current_screenshot_hash = hashlib.md5(screenshot_bytes).hexdigest()
+
+        if (current_sig == last_action_signature
+                and current_screenshot_hash == last_screenshot_hash_at_action):
+            logger.warning(f"Identical actions on turn {turn+1} with unchanged screen — stopping")
             summary = "Task complete — repeated action guard triggered."
             # Speak the final result into the Live session before it gets cancelled
             if live_session_ref is not None and live_session_ref[0] is not None:
@@ -462,6 +474,7 @@ async def run_agent_loop(
             return
          
         last_action_signature = current_sig
+        last_screenshot_hash_at_action = current_screenshot_hash
 
         # Execute each action
         for fc in function_calls:
@@ -560,6 +573,7 @@ async def run_agent_loop(
 
         # Brief wait for page to settle after actions
         await asyncio.sleep(post_nav_sleep)
+        last_action_finish_time = time.time()
 
     # Max turns reached
     summary = f"Agent reached the maximum of {settings.MAX_AGENT_TURNS} steps. The task may be partially complete."

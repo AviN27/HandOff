@@ -423,46 +423,57 @@ async function executeAction(action, args) {
         return window.udaa.performKeyCombination(args.keys || []);
 
     } else if (action === "scroll_document" || action === "scroll") {
-        // If an elevated scrollable container is visible (open dropdown),
-        // scroll that instead of the page
-        try {
-            const elevated = [...document.querySelectorAll('*')].filter(el => {
-                if (!_isVisible(el)) return false;
-                const s = window.getComputedStyle(el);
-                return /auto|scroll/.test(s.overflow + s.overflowY)
-                    && el.scrollHeight > el.clientHeight
-                    && _hasElevatedAncestor(el);
-            });
-            if (elevated.length > 0) {
-                const delta = (args.direction || 'down') === 'down'
-                    ? (args.amount || 3) * 80
-                    : -(args.amount || 3) * 80;
-                elevated[0].scrollBy({ top: delta, behavior: 'smooth' });
-                console.log('UDAA: Scrolled elevated container — dropdown scroll');
-                return true;
-            }
-        } catch (e) {
-            // Fall through to page scroll
+        const PIXELS_PER_CLICK = 120;
+        const clicks = args.amount ?? 3;
+        const direction = (args.direction || "down").toLowerCase();
+
+        let deltaX = 0, deltaY = 0;
+        if (direction === "down")  deltaY =  clicks * PIXELS_PER_CLICK;
+        if (direction === "up")    deltaY = -clicks * PIXELS_PER_CLICK;
+        if (direction === "right") deltaX =  clicks * PIXELS_PER_CLICK;
+        if (direction === "left")  deltaX = -clicks * PIXELS_PER_CLICK;
+
+        // Extract coordinate from whichever arg shape Gemini sends
+        let cx = null, cy = null;
+        if (args.coordinate?.length >= 2) {
+            cx = Math.round((args.coordinate[0] / 1000) * window.innerWidth);
+            cy = Math.round((args.coordinate[1] / 1000) * window.innerHeight);
+        } else if (args.coordinates?.length >= 2) {
+            cx = Math.round((args.coordinates[0] / 1000) * window.innerWidth);
+            cy = Math.round((args.coordinates[1] / 1000) * window.innerHeight);
+        } else if (args.x !== undefined && args.y !== undefined) {
+            cx = Math.round((args.x / 1000) * window.innerWidth);
+            cy = Math.round((args.y / 1000) * window.innerHeight);
         }
-        return window.udaa.performScroll(args.direction || 'down', args.amount || 3);
+
+        return window.udaa.performScroll(cx, cy, deltaX, deltaY);
 
     } else if (action === "scroll_at") {
+        const PIXELS_PER_CLICK = 120;
         const { x, y } = _scaleCoords(args);
-        const viewX = x - window.scrollX;
-        const viewY = y - window.scrollY;
-        const el = document.elementFromPoint(viewX, viewY);
-        const container = el ? _findScrollableContainer(el) : null;
-        if (container) {
-            const delta = (args.direction || 'down') === 'down'
-                ? (args.amount || 3) * 80
-                : -(args.amount || 3) * 80;
-            container.scrollBy({ top: delta, behavior: 'smooth' });
-            console.log('UDAA: Scrolled container:', container.className?.slice(0, 40));
-            return true;
+        const clicks = args.amount ?? 3;
+        const direction = (args.direction || "down").toLowerCase();
+
+        let deltaX = 0, deltaY = 0;
+        if (direction === "down")  deltaY =  clicks * PIXELS_PER_CLICK;
+        if (direction === "up")    deltaY = -clicks * PIXELS_PER_CLICK;
+        if (direction === "right") deltaX =  clicks * PIXELS_PER_CLICK;
+        if (direction === "left")  deltaX = -clicks * PIXELS_PER_CLICK;
+
+        return window.udaa.performScroll(x, y, deltaX, deltaY);
+
+    } else if (action === "scroll_to") {
+        let cx = null, cy = null;
+        if (args.coordinate?.length >= 2) {
+            cx = Math.round((args.coordinate[0] / 1000) * window.innerWidth);
+            cy = Math.round((args.coordinate[1] / 1000) * window.innerHeight);
+        } else if (args.x !== undefined && args.y !== undefined) {
+            cx = Math.round((args.x / 1000) * window.innerWidth);
+            cy = Math.round((args.y / 1000) * window.innerHeight);
         }
-        // No scrollable container found — hover then scroll page
-        window.udaa.performHover(x, y);
-        return window.udaa.performScroll(args.direction || 'down', args.amount || 3);
+        const targetY = args.pixel_y ?? args.target_y ?? 0;
+        const targetX = args.pixel_x ?? args.target_x ?? 0;
+        return window.udaa.performScrollTo(cx, cy, targetX, targetY);
 
         // NEW: select a named option from an open dropdown
         // Gemini should call this when it needs to pick a city, date, or list item
@@ -502,18 +513,15 @@ window.udaa = {
     },
 
     performClick: (x, y) => {
-        // Save click coordinates for the DOM Resolver
+        // Save viewport coordinates for the DOM Resolver
         window._udaaLastClickX = x;
         window._udaaLastClickY = y;
 
-        // elementFromPoint evaluates viewport-relative coords, whereas x,y are layout relative
-        // We must subtract scroll distances
-        const viewportX = x - window.scrollX;
-        const viewportY = y - window.scrollY;
+        // Coordinates from Gemini are already viewport-relative (0-1000 scaled to window.innerWidth/Height)
+        const viewportX = x;
+        const viewportY = y;
 
         let element = document.elementFromPoint(viewportX, viewportY);
-        // Fallback to absolute point if off-screen heuristics fail
-        if (!element) element = document.elementFromPoint(x, y);
 
         if (element) {
             if (window.udaaOverlay) {
@@ -631,6 +639,48 @@ window.udaa = {
         return true;
     },
 
+    performScroll: (x, y, deltaX, deltaY, behavior = "auto") => {
+        let target = window;
+
+        if (x !== null && y !== null) {
+            const viewportX = x;
+            const viewportY = y;
+            const el = document.elementFromPoint(viewportX, viewportY);
+            const container = el ? _findScrollableContainer(el) : null;
+            if (container) target = container;
+        }
+
+        if (target === window) {
+            window.scrollBy({ left: deltaX, top: deltaY, behavior });
+        } else {
+            target.scrollBy({ left: deltaX, top: deltaY, behavior });
+        }
+
+        console.log(`UDAA: Scrolled ${target === window ? 'window' : target.className?.slice(0, 30)} by (${deltaX}, ${deltaY})px`);
+        return true;
+    },
+
+    performScrollTo: (x, y, targetX, targetY, behavior = "auto") => {
+        let target = window;
+
+        if (x !== null && y !== null) {
+            const viewportX = x;
+            const viewportY = y;
+            const el = document.elementFromPoint(viewportX, viewportY);
+            const container = el ? _findScrollableContainer(el) : null;
+            if (container) target = container;
+        }
+
+        if (target === window) {
+            window.scrollTo({ left: targetX, top: targetY, behavior });
+        } else {
+            target.scrollTo({ left: targetX, top: targetY, behavior });
+        }
+
+        console.log(`UDAA: ScrollTo (${targetX}, ${targetY})px on ${target === window ? 'window' : target.className?.slice(0, 30)}`);
+        return true;
+    },
+
     performHover: (x, y) => {
         const element = document.elementFromPoint(x, y);
         if (element) {
@@ -688,13 +738,6 @@ window.udaa = {
                 cancelable: true
             }));
         }
-        return true;
-    },
-
-    performScroll: (direction, amount = 3) => {
-        const delta = direction === "down" ? amount * 100 : -(amount * 100);
-        window.scrollBy({ top: delta, behavior: "smooth" });
-        console.log(`UDAA: Scrolled ${direction} by ${delta}`);
         return true;
     }
 };
