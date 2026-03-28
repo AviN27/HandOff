@@ -2,8 +2,6 @@
 
 **HandOff** is an AI-powered co-pilot designed to become the "hands on screen" for users with accessibility needs. By combining **Gemini 2.5 Computer Use** for visual navigation and **gemini-2.5-flash-native-audio** for real-time narration, HandOff bridge the gap between user intent and complex digital interfaces.
 
-Built for the **Gemini Live Agent Challenge** under the **UI Navigator** category.
-
 ---
 
 ## 🌟 Key Features
@@ -92,9 +90,9 @@ Execute these tasks in **Live Mode** to see the recent accuracy and synchronizat
 
 ---
 
-## 🏆 Hackathon Alignment: UI Navigator Track
+## 🏆 Future enhancements
 
-HandOff addresses the core requirements of the **UI Navigator** track by:
-1. **Becoming the user's hands**: Direct physical manipulation of the browser.
-2. **Visual Understanding**: Interpreting UI with or *without* DOM access (Live mode is 100% visual coordinate based).
-3. **Multimodal Core**: Every action is guided by the latest Gemini multimodal screenshot processing.
+- General polishing and QOL fixes.
+- Enabling better voice analysis and responses for complex multi layered tasks.
+- Adding more highlighting during autonomous navigation to cater to larger groups.
+- Creating a mobile version.
